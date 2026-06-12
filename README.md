@@ -2,6 +2,8 @@
 
 ### Automated Multi-Asset OSINT Triage Platform for Cross-Chain Capital Flight and Layered Placement Detection
 
+🎬 [View Live Video Demonstration Here](https://streamable.com/pw5sec)
+
 ---
 
 ## 1. Executive Summary
