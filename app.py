@@ -84,8 +84,8 @@ st.markdown("""
 st.title("Anaxagros Crypto-OSINT Intelligence Monitor")
 st.markdown("---")
 
-st.sidebar.markdown("### 🔒 Operational Security & Data Governance")
-st.sidebar.markdown("**Data Privacy Assurance**: This architecture executes entirely on client-side volatile memory. Ingested data streams are never cached, persistent, or logged to any cloud database, maintaining strict compliance with GDPR data minimization frameworks.")
+st.sidebar.markdown("### 🔒 Operational Security Notice")
+st.sidebar.markdown("**Data Handling**: This tool runs on the server, not in your browser. Queried addresses are sent to third-party blockchain APIs (Blockchain.info, Blockstream, Blockscout, Cloudflare ETH, Trongrid, Solana RPC, xrplcluster.com, Blockcypher), which may log requests. Do not input sensitive addresses unless you control the server and all network paths. Streamlit collects default telemetry; disable with `STREAMLIT_BROWSER_GATHER_USAGE_STATS=false`.")
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### ⚙️ Compliance Risk Rules")
@@ -223,6 +223,14 @@ with tab1:
                 if not any(all_addrs):
                     st.success("Clean. No cryptographic vectors detected in the provided intelligence dump.")
                 else:
+                    total_addrs = sum(len(a) for a in all_addrs)
+                    if total_addrs > 20:
+                        st.warning(
+                            f"⚠️ **{total_addrs} addresses detected** — running the full audit will send "
+                            f"requests to up to {total_addrs * 7} third-party blockchain APIs. "
+                            "Consider splitting the dump into smaller batches to avoid rate limits."
+                        )
+
                     report_lines = [
                         "==================================================",
                         "  ANAXAGROS OPERATIONAL AUDIT REPORT SUMMARY",
@@ -243,14 +251,16 @@ with tab1:
                             col1, col2 = st.columns([1, 2])
                             with col1:
                                 st.code(addr, language="text")
-                                if "CRITICAL" in risk_level:
+                                if "PARTIAL DATA" in risk_level:
+                                    st.warning(f"**Status:** {risk_level}")
+                                elif "CRITICAL" in risk_level:
                                     st.error(f"**Status:** {risk_level}")
                                 elif "MEDIUM" in risk_level:
                                     st.warning(f"**Status:** {risk_level}")
                                 elif "LOW" in risk_level:
                                     st.success(f"**Status:** {risk_level}")
                                 else:
-                                    st.info(f"**Status:** {risk_level}")
+                                    st.error(f"**Status:** {risk_level} — DATA RETRIEVAL FAILED")
                             with col2:
                                 st.json(data)
                                 
@@ -267,14 +277,16 @@ with tab1:
                             col1, col2 = st.columns([1, 2])
                             with col1:
                                 st.code(addr, language="text")
-                                if "CRITICAL" in risk_level:
+                                if "PARTIAL DATA" in risk_level:
+                                    st.warning(f"**Status:** {risk_level}")
+                                elif "CRITICAL" in risk_level:
                                     st.error(f"**Status:** {risk_level}")
                                 elif "MEDIUM" in risk_level:
                                     st.warning(f"**Status:** {risk_level}")
                                 elif "LOW" in risk_level:
                                     st.success(f"**Status:** {risk_level}")
                                 else:
-                                    st.info(f"**Status:** {risk_level}")
+                                    st.error(f"**Status:** {risk_level} — DATA RETRIEVAL FAILED")
                             with col2:
                                 st.json(data)
                                 
@@ -288,14 +300,16 @@ with tab1:
                             col1, col2 = st.columns([1, 2])
                             with col1:
                                 st.code(addr, language="text")
-                                if "CRITICAL" in risk_level:
+                                if "PARTIAL DATA" in risk_level:
+                                    st.warning(f"**Status:** {risk_level}")
+                                elif "CRITICAL" in risk_level:
                                     st.error(f"**Status:** {risk_level}")
                                 elif "MEDIUM" in risk_level:
                                     st.warning(f"**Status:** {risk_level}")
                                 elif "LOW" in risk_level:
                                     st.success(f"**Status:** {risk_level}")
                                 else:
-                                    st.info(f"**Status:** {risk_level}")
+                                    st.error(f"**Status:** {risk_level} — DATA RETRIEVAL FAILED")
                             with col2:
                                 st.json(data)
                                 
@@ -309,14 +323,16 @@ with tab1:
                             col1, col2 = st.columns([1, 2])
                             with col1:
                                 st.code(addr, language="text")
-                                if "CRITICAL" in risk_level:
+                                if "PARTIAL DATA" in risk_level:
+                                    st.warning(f"**Status:** {risk_level}")
+                                elif "CRITICAL" in risk_level:
                                     st.error(f"**Status:** {risk_level}")
                                 elif "MEDIUM" in risk_level:
                                     st.warning(f"**Status:** {risk_level}")
                                 elif "LOW" in risk_level:
                                     st.success(f"**Status:** {risk_level}")
                                 else:
-                                    st.info(f"**Status:** {risk_level}")
+                                    st.error(f"**Status:** {risk_level} — DATA RETRIEVAL FAILED")
                             with col2:
                                 st.json(data)
 
@@ -344,14 +360,16 @@ with tab1:
                             col1, col2 = st.columns([1, 2])
                             with col1:
                                 st.code(addr, language="text")
-                                if "CRITICAL" in risk_level:
+                                if "PARTIAL DATA" in risk_level:
+                                    st.warning(f"**Status:** {risk_level}")
+                                elif "CRITICAL" in risk_level:
                                     st.error(f"**Status:** {risk_level}")
                                 elif "MEDIUM" in risk_level:
                                     st.warning(f"**Status:** {risk_level}")
                                 elif "LOW" in risk_level:
                                     st.success(f"**Status:** {risk_level}")
                                 else:
-                                    st.info(f"**Status:** {risk_level}")
+                                    st.error(f"**Status:** {risk_level} — DATA RETRIEVAL FAILED")
                             with col2:
                                 st.json(data)
 
@@ -365,14 +383,16 @@ with tab1:
                             col1, col2 = st.columns([1, 2])
                             with col1:
                                 st.code(addr, language="text")
-                                if "CRITICAL" in risk_level:
+                                if "PARTIAL DATA" in risk_level:
+                                    st.warning(f"**Status:** {risk_level}")
+                                elif "CRITICAL" in risk_level:
                                     st.error(f"**Status:** {risk_level}")
                                 elif "MEDIUM" in risk_level:
                                     st.warning(f"**Status:** {risk_level}")
                                 elif "LOW" in risk_level:
                                     st.success(f"**Status:** {risk_level}")
                                 else:
-                                    st.info(f"**Status:** {risk_level}")
+                                    st.error(f"**Status:** {risk_level} — DATA RETRIEVAL FAILED")
                             with col2:
                                 st.json(data)
 
@@ -443,18 +463,31 @@ Each blockchain has distinct economic and technical characteristics that inform 
 - **☀️ Solana (SOL):** Ultra-high throughput. Tx cap of 1,000 reflects massive on-chain activity from micro-transaction fee model.
 
 ### 📊 API Limitations & Capped Counts
-Free-tier public APIs impose result limits per request:
-- **TRON (Trongrid):** Max 200 txns per call — returns "+200" if limit hit.
-- **Solana (RPC):** Max 1,000 signatures per call — returns "+1000" if limit hit.
-- **XRP (xrplcluster):** Max 400 txns per call — returns "+400" if limit hit.
-Any capped count automatically escalates to Critical Risk, since the actual transaction volume is known to be higher than the displayed figure.
+Public API endpoints impose limits on the number of transactions returned. The engine uses pagination where available but caps pagination to prevent unbounded requests:
+- **TRON (Trongrid):** Uses cursor-based pagination (`fingerprint`) up to 10 pages (2,000 txns max). Returns `+{total}` if the cap is reached. The API does not provide a total count field, so the actual count may be higher.
+- **Solana (RPC):** Max 1,000 signatures per call—returns `"+1000"` if the limit is hit (no pagination support on the free endpoint).
+- **XRP (xrplcluster):** Max 400 txns per call—returns `"+400"` if the response contains a pagination marker or reaches the limit.
+- **All chains:** tx_count values are lower-bound estimates bounded by API limits. Any capped count automatically escalates to Critical Risk, since the actual transaction volume is known to be higher than the displayed figure.
+
+### ⏱️ Request Throttling & Caching
+The engine applies several safeguards to avoid overwhelming public APIs:
+- **TTL cache**: Each address's audit result is cached for 5 minutes (`_CACHE_TTL=300`). Repeated analysis of the same address within that window returns cached data without re-firing HTTP requests.
+- **Domain throttling**: A 250ms minimum interval is enforced between requests to the same API domain to reduce 429 responses.
+- **Retry with backoff**: Transient failures and HTTP 429 responses trigger up to 3 retries with exponential backoff (1s, 2s, 4s).
+- **Address limit**: If more than 20 addresses are detected in a single run, a warning is displayed before execution.
+
+Known API rate limits (unauthenticated):
+- **Blockchain.info**: ~1 request / 10s per IP
+- **Blockcypher**: 200 requests / hour
+- **Trongrid**: Enforces rate limits unauthenticated
+- **Solana RPC**: 100 requests / 10s
 
 ### ⚖️ Dynamic Risk Matrix & Scoring Profiles
 The platform evaluates the final security status (LOW, MEDIUM, CRITICAL) using a deterministic matrix based on active compliance thresholds:
 - **🟢 LOW RISK:** Both balance and transaction counts remain strictly below the active compliance thresholds.
 - **🟡 MEDIUM RISK:** Triggered if EITHER the transaction count OR the balance breaks a threshold (e.g., a "churning wallet" with 3,000 transactions but 0.0 ETH balance, or a "cold wallet" with 50 ETH but 0 transactions).
-- **🚨 CRITICAL RISK:** Triggered if BOTH parameters break thresholds simultaneously, if any API hit reaches its hard cap (e.g., "+200" on TRON), or if the balance alone exceeds the active threshold by more than 200%.
+- **🚨 CRITICAL RISK:** Triggered if BOTH parameters break thresholds simultaneously, if any API hit reaches its hard cap (e.g., "+2000" on TRON), or if the balance alone exceeds the active threshold by more than 200%.
 """)
 
     st.markdown("---")
-    st.caption("Anaxagros Crypto-OSINT v2.0 — All risk assessments are performed in-memory. No data is persisted, logged, or transmitted to third-party storage.")
+    st.caption("Anaxagros Crypto-OSINT v2.0 — Risk assessments are performed in server memory. Queried addresses are transmitted to third-party blockchain APIs (see Methodology tab). Not for use with sensitive operational targets unless you control the server environment.")

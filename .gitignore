@@ -1,0 +1,14 @@
+crypto_osint.spec.md
+
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+venv/
+.Python
+.DS_Store
+.idea/
+.vscode/
+.coverage
+htmlcov/

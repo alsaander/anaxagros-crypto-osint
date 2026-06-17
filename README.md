@@ -10,7 +10,7 @@
 
 Modern decentralized financial architectures have fundamentally transformed the landscape of illicit finance. Sophisticated syndicates and threat actors exploit high transaction velocity and cross-chain mechanics to obscure capital tracks. By spreading value across alternative blockchains—such as Solana, Litecoin, and TRON—and leveraging native privacy assets like Monero, bad actors successfully bypass traditional, static compliance heuristics and siloed chain-monitoring tools.
 
-The **Anaxagros Crypto-OSINT Intelligence Monitor** is an enterprise-grade, client-side triage platform designed specifically for Anti-Money Laundering (AML) investigators, forensic analysts, and cybersecurity incident response teams. It extracts, parses, and audits cryptographic addresses from unstructured intelligence dumps in real-time, executing mainnet queries and applying deterministic compliance thresholds to accelerate the triage lifecycle.
+The **Anaxagros Crypto-OSINT Intelligence Monitor** is a triage platform designed specifically for Anti-Money Laundering (AML) investigators, forensic analysts, and cybersecurity incident response teams. It extracts, parses, and audits cryptographic addresses from unstructured intelligence dumps in real-time, executing mainnet queries and applying deterministic compliance thresholds to accelerate the triage lifecycle.
 
 ---
 
@@ -37,9 +37,15 @@ The application bypasses static database dependencies by querying active network
 - **Bitcoin Node API**: Integrates with standard public blockchain APIs for direct UTXO-based metric tracking.
 - **Structured Fallback Engines**: TRON and XRP targets execute structured, deterministic mock responses to bypass authorization walls and rate limits while maintaining schema consistency.
 
-### 🛡️ Privacy Coin Mitigation & Data Governance
+### 🛡️ Privacy Coin Mitigation
 - **Monero (XMR) Defensive Policy**: In compliance with international AML guidelines (FATF Travel Rule / FinCEN Guidance), the platform acknowledges that Monero's stealth addresses, ring signatures, and confidential transactions prevent on-chain visibility. Rather than wasting network resources or failing silently, the OSINT engine immediately triggers an automated mitigation protocol: isolating the Monero address and assigning a **`🚨 CRITICAL RISK / PRIVACY COIN COUNTERMEASURE`** flag accompanied by an operational warning for threat-intelligence database cross-referencing.
-- **Data Governance Model**: Built to respect the data minimization principles of GDPR and HIPAA. The tool executes entirely within volatile client-side memory. Input logs and parsed addresses are never persistently cached, stored on server disks, or telemetry-exported.
+
+### 🔓 Data Handling Disclosure
+This tool runs on a server (Streamlit), not in your browser. When you submit an intelligence dump:
+- **All processing occurs server-side** — input text, extracted addresses, and results are handled by the Python process on the server.
+- **Addresses are transmitted to third-party blockchain APIs** for live on-chain data, including: Blockchain.info, Blockstream, Blockscout, Cloudflare ETH RPC, Trongrid, Solana RPC nodes, xrplcluster.com, and Blockcypher. These services log incoming requests in their own access logs.
+- **Streamlit telemetry** is enabled by default. Disable it by setting `STREAMLIT_BROWSER_GATHER_USAGE_STATS=false` before launching.
+- **Do not use this tool with sensitive operational targets** unless you control the server environment and all network paths. On shared or cloud-hosted deployments (e.g., Streamlit Community Cloud), infrastructure logs may capture submitted data.
 
 ### 📄 Automated Compliance Export
 Allows analysts to instantly compile and export a standardized **Operational Audit Report Summary** (.txt). The output contains:

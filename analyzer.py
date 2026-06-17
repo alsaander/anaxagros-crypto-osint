@@ -1,5 +1,32 @@
 import re
+import time
+import functools
+import logging
+import json
+from urllib.parse import urlparse
 import requests
+import base58
+
+logger = logging.getLogger(__name__)
+
+_API_EXCEPTIONS = (
+    requests.exceptions.Timeout,
+    requests.exceptions.ConnectionError,
+    requests.exceptions.RequestException,
+    ConnectionError,
+    json.JSONDecodeError,
+    KeyError,
+    ValueError,
+    TypeError,
+    IndexError,
+)
+
+
+def _mask_addr(addr: str) -> str:
+    if len(addr) <= 10:
+        return addr
+    return addr[:6] + "..." + addr[-4:]
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Address Regex Patterns
@@ -12,7 +39,87 @@ XMR_REGEX  = r'\b[48][0-9a-zA-Z]{94}\b'
 SOL_REGEX  = r'\b[1-9A-HJ-NP-Za-km-z]{32,44}\b'
 XRP_REGEX  = r'\br[1-9A-HJ-NP-Za-km-z]{24,34}\b'
 
+
+def is_valid_solana_address(addr: str) -> bool:
+    try:
+        decoded = base58.b58decode(addr)
+        return len(decoded) == 32
+    except Exception:
+        return False
+
+
 _TIMEOUT = 10  # strict 10-second timeout per HTTP request
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Response cache, domain throttle, and retry helpers
+# ─────────────────────────────────────────────────────────────────────────────
+_cache = {}
+_CACHE_TTL = 300
+
+def ttl_cache(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        key = (func.__name__, args, tuple(sorted(kwargs.items())))
+        now = time.time()
+        if key in _cache:
+            result, expiry = _cache[key]
+            if now < expiry:
+                return result
+        result = func(*args, **kwargs)
+        _cache[key] = (result, now + _CACHE_TTL)
+        return result
+    return wrapper
+
+
+_last_request_time = {}
+_REQUEST_INTERVAL = 0.25
+
+def _throttle(url):
+    domain = urlparse(url).netloc
+    now = time.time()
+    last = _last_request_time.get(domain, 0)
+    elapsed = now - last
+    if elapsed < _REQUEST_INTERVAL:
+        time.sleep(_REQUEST_INTERVAL - elapsed)
+    _last_request_time[domain] = time.time()
+
+MAX_RETRIES = 3
+
+def _get(url, **kwargs):
+    _throttle(url)
+    last_exc = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            resp = requests.get(url, **kwargs)
+            if resp.status_code == 429:
+                time.sleep((2 ** attempt))
+                continue
+            return resp
+        except Exception as e:
+            last_exc = e
+            if attempt < MAX_RETRIES - 1:
+                time.sleep((2 ** attempt))
+    if last_exc:
+        raise last_exc
+    return resp
+
+def _post(url, **kwargs):
+    _throttle(url)
+    last_exc = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            resp = requests.post(url, **kwargs)
+            if resp.status_code == 429:
+                time.sleep((2 ** attempt))
+                continue
+            return resp
+        except Exception as e:
+            last_exc = e
+            if attempt < MAX_RETRIES - 1:
+                time.sleep((2 ** attempt))
+    if last_exc:
+        raise last_exc
+    return resp
 
 
 def extract_entities(text: str) -> dict:
@@ -26,7 +133,7 @@ def extract_entities(text: str) -> dict:
     raw_sol = list(set(re.findall(SOL_REGEX, text)))
     other   = set(btc_matches + eth_matches + ltc_matches +
                   tron_matches + xmr_matches + xrp_matches)
-    sol_matches = [m for m in raw_sol if m not in other]
+    sol_matches = [m for m in raw_sol if m not in other and is_valid_solana_address(m)]
 
     return {
         "BTC": btc_matches, "ETH": eth_matches, "LTC": ltc_matches,
@@ -38,6 +145,7 @@ def extract_entities(text: str) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 # BTC  —  blockchain.info
 # ─────────────────────────────────────────────────────────────────────────────
+@ttl_cache
 def audit_btc(address: str) -> dict:
     # Primary: Blockchain.info rawaddr
     try:
@@ -45,7 +153,7 @@ def audit_btc(address: str) -> dict:
         headers = {
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
-        resp = requests.get(url, headers=headers, timeout=10)
+        resp = _get(url, headers=headers, timeout=10)
         if resp.status_code == 200:
             data = resp.json()
             tx_count = data.get("n_tx", 0)
@@ -57,13 +165,13 @@ def audit_btc(address: str) -> dict:
                 "net_balance": net_balance,
                 "tx_count": tx_count,
             }
-    except Exception:
-        pass
+    except _API_EXCEPTIONS as exc:
+        logger.warning("audit_btc: primary API failed for %s: %s", _mask_addr(address), exc)
 
     # Fallback: Blockstream public API
     try:
         bs_url = f"https://blockstream.info/api/address/{address}"
-        bs_resp = requests.get(bs_url, timeout=10)
+        bs_resp = _get(bs_url, timeout=10)
         if bs_resp.status_code == 200:
             bs_data = bs_resp.json()
             chain = bs_data.get("chain_stats", {})
@@ -78,8 +186,8 @@ def audit_btc(address: str) -> dict:
                 "net_balance": net_balance,
                 "tx_count": tx_count,
             }
-    except Exception:
-        pass
+    except _API_EXCEPTIONS as exc:
+        logger.warning("audit_btc: fallback API failed for %s: %s", _mask_addr(address), exc)
 
     return {
         "status": "error",
@@ -93,6 +201,7 @@ def audit_btc(address: str) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 # ETH  —  Strict JSON-RPC
 # ─────────────────────────────────────────────────────────────────────────────
+@ttl_cache
 def audit_eth(address: str) -> dict:
     RPC_NODES = [
         "https://cloudflare-eth.com",
@@ -115,7 +224,7 @@ def audit_eth(address: str) -> dict:
                 "params": [clean_address, "latest"],
                 "id": 1
             }
-            r_bal = requests.post(rpc_url, json=p_bal, headers=headers, timeout=_TIMEOUT)
+            r_bal = _post(rpc_url, json=p_bal, headers=headers, timeout=_TIMEOUT)
             if r_bal.status_code != 200:
                 continue
             d_bal = r_bal.json()
@@ -126,7 +235,8 @@ def audit_eth(address: str) -> dict:
             balance_wei = int(bal_hex, 16)
             net_balance = float(balance_wei) / 10**18
             break
-        except Exception:
+        except _API_EXCEPTIONS as exc:
+            logger.warning("audit_eth: balance RPC failed for %s on %s: %s", _mask_addr(address), rpc_url, exc)
             continue
 
     if net_balance is None:
@@ -140,21 +250,19 @@ def audit_eth(address: str) -> dict:
 
     # 2. Primary: Blockscout counters (total inbound + outbound txs)
     tx_count = None
+    tx_count_fetched = False
     try:
         bs_url = f"https://eth.blockscout.com/api/v2/addresses/{clean_address}/counters"
-        bs_resp = requests.get(bs_url, timeout=_TIMEOUT)
+        bs_resp = _get(bs_url, timeout=_TIMEOUT)
         if bs_resp.status_code == 200:
             raw = bs_resp.json().get("transactions_count", "0") or "0"
             tx_count = int(raw)
-            print(f"[audit_eth] {clean_address} -> Blockscout OK: tx_count={tx_count}")
-        else:
-            print(f"[audit_eth] {clean_address} -> Blockscout returned HTTP {bs_resp.status_code}")
-    except Exception as e:
-        print(f"[audit_eth] {clean_address} -> Blockscout exception: {e}")
+            tx_count_fetched = True
+    except _API_EXCEPTIONS as exc:
+        logger.warning("audit_eth: Blockscout failed for %s: %s", _mask_addr(address), exc)
 
     # 3. Fallback: nonce via RPC if Blockscout is unreachable
-    if tx_count is None:
-        print(f"[audit_eth] {clean_address} -> Falling back to RPC nonce")
+    if not tx_count_fetched:
         for rpc_url in RPC_NODES:
             try:
                 p_tx = {
@@ -163,7 +271,7 @@ def audit_eth(address: str) -> dict:
                     "params": [clean_address, "latest"],
                     "id": 1
                 }
-                r_tx = requests.post(rpc_url, json=p_tx, headers=headers, timeout=_TIMEOUT)
+                r_tx = _post(rpc_url, json=p_tx, headers=headers, timeout=_TIMEOUT)
                 if r_tx.status_code != 200:
                     continue
                 d_tx = r_tx.json()
@@ -171,15 +279,23 @@ def audit_eth(address: str) -> dict:
                     continue
                 tx_hex = d_tx.get("result") or "0x0"
                 tx_count = int(tx_hex, 16)
-                print(f"[audit_eth] {clean_address} -> RPC {rpc_url} nonce: tx_count={tx_count}")
+                tx_count_fetched = True
                 break
-            except Exception as e:
-                print(f"[audit_eth] {clean_address} -> RPC {rpc_url} error: {e}")
+            except _API_EXCEPTIONS as exc:
+                logger.warning("audit_eth: nonce RPC failed for %s on %s: %s", _mask_addr(address), rpc_url, exc)
                 continue
 
     if tx_count is None:
         tx_count = 0
-        print(f"[audit_eth] {clean_address} -> All sources failed, defaulting to 0")
+
+    if not tx_count_fetched:
+        return {
+            "status": "partial_error",
+            "currency": "ETH",
+            "address": clean_address,
+            "net_balance": net_balance,
+            "tx_count": 0,
+        }
 
     return {
         "status": "success",
@@ -193,10 +309,11 @@ def audit_eth(address: str) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 # LTC  —  blockcypher public
 # ─────────────────────────────────────────────────────────────────────────────
+@ttl_cache
 def audit_ltc(address: str) -> dict:
     try:
         url  = f"https://api.blockcypher.com/v1/ltc/main/addrs/{address}/balance"
-        resp = requests.get(url, timeout=_TIMEOUT)
+        resp = _get(url, timeout=_TIMEOUT)
         if resp.status_code != 200:
             return {
                 "status": "error",
@@ -217,7 +334,8 @@ def audit_ltc(address: str) -> dict:
             "net_balance": round(net_balance, 8),
             "tx_count": tx_count,
         }
-    except Exception:
+    except _API_EXCEPTIONS as exc:
+        logger.warning("audit_ltc: API failed for %s: %s", _mask_addr(address), exc)
         return {
             "status": "error",
             "currency": "LTC",
@@ -230,11 +348,12 @@ def audit_ltc(address: str) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 # TRON  —  Trongrid REST API
 # ─────────────────────────────────────────────────────────────────────────────
+@ttl_cache
 def audit_tron(address: str) -> dict:
     try:
         # 1. Balance via Trongrid REST API
         tg_url = f"https://api.trongrid.io/v1/accounts/{address}"
-        tg_resp = requests.get(tg_url, timeout=_TIMEOUT)
+        tg_resp = _get(tg_url, timeout=_TIMEOUT)
         if tg_resp.status_code != 200:
             return {
                 "status": "error",
@@ -252,10 +371,35 @@ def audit_tron(address: str) -> dict:
             sun_balance = 0
         trx_balance = float(sun_balance) / 1000000.0
 
-        # 2. Transactions via single GET request
-        tx_url = f"https://api.trongrid.io/v1/accounts/{address}/transactions?limit=200"
-        tx_resp = requests.get(tx_url, timeout=_TIMEOUT)
-        if tx_resp.status_code != 200:
+        # 2. Transactions via cursor-based pagination
+        tx_url = "https://api.trongrid.io/v1/accounts/{}/transactions"
+        tx_total = 0
+        fingerprint = None
+        MAX_TRON_PAGES = 10
+        pages_fetched = 0
+        for _ in range(MAX_TRON_PAGES):
+            params = {"limit": 200}
+            if fingerprint:
+                params["fingerprint"] = fingerprint
+            try:
+                tx_resp = _get(tx_url.format(address), params=params, timeout=_TIMEOUT)
+                if tx_resp.status_code != 200:
+                    break
+                tx_json = tx_resp.json()
+            except _API_EXCEPTIONS as exc:
+                logger.warning("audit_tron: pagination failed for %s: %s", _mask_addr(address), exc)
+                break
+            pages_fetched += 1
+            tx_list = tx_json.get("data", [])
+            tx_total += len(tx_list)
+            meta = tx_json.get("meta", {})
+            fingerprint = meta.get("fingerprint") if meta else None
+            if not fingerprint:
+                break
+        else:
+            tx_total = f"+{tx_total}"
+
+        if pages_fetched == 0:
             return {
                 "status": "error",
                 "currency": "TRX",
@@ -264,12 +408,11 @@ def audit_tron(address: str) -> dict:
                 "tx_count": 0
             }
 
-        tx_json = tx_resp.json()
-        tx_list = tx_json.get("data", [])
-        if len(tx_list) == 200:
-            tx_count = "+200"
-        else:
-            tx_count = len(tx_list)
+        # If we exited early with a fingerprint still set, the count is partial
+        if isinstance(tx_total, int) and fingerprint:
+            tx_total = f"+{tx_total}"
+
+        tx_count = tx_total
 
         return {
             "status": "success",
@@ -278,7 +421,8 @@ def audit_tron(address: str) -> dict:
             "net_balance": round(trx_balance, 6),
             "tx_count": tx_count,
         }
-    except Exception:
+    except _API_EXCEPTIONS as exc:
+        logger.warning("audit_tron: API failed for %s: %s", _mask_addr(address), exc)
         return {
             "status": "error",
             "currency": "TRX",
@@ -291,6 +435,7 @@ def audit_tron(address: str) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 # XMR  —  Privacy coin
 # ─────────────────────────────────────────────────────────────────────────────
+@ttl_cache
 def audit_xmr(address: str) -> dict:
     return {
         "status": "success",
@@ -304,6 +449,7 @@ def audit_xmr(address: str) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 # SOL  —  Solana RPC
 # ─────────────────────────────────────────────────────────────────────────────
+@ttl_cache
 def audit_sol(address: str) -> dict:
     SOL_NODES = [
         "https://api.mainnet-beta.solana.com",
@@ -320,7 +466,7 @@ def audit_sol(address: str) -> dict:
                 "method": "getBalance",
                 "params": [address]
             }
-            r_bal = requests.post(rpc_url, json=p_bal, headers=headers, timeout=_TIMEOUT)
+            r_bal = _post(rpc_url, json=p_bal, headers=headers, timeout=_TIMEOUT)
             if r_bal.status_code != 200:
                 continue
             d_bal = r_bal.json()
@@ -337,13 +483,13 @@ def audit_sol(address: str) -> dict:
                 "method": "getSignaturesForAddress",
                 "params": [address, {"limit": 1000}]
             }
-            r_sig = requests.post(rpc_url, json=p_sig, headers=headers, timeout=_TIMEOUT)
+            r_sig = _post(rpc_url, json=p_sig, headers=headers, timeout=_TIMEOUT)
             tx_count = 0
             if r_sig.status_code == 200:
                 sigs = r_sig.json().get("result", [])
                 if isinstance(sigs, list):
                     tx_count = len(sigs)
-                    if tx_count == 1000:
+                    if tx_count >= 1000:
                         tx_count = "+1000"
 
             return {
@@ -353,7 +499,8 @@ def audit_sol(address: str) -> dict:
                 "net_balance": round(sol_balance, 9),
                 "tx_count": tx_count,
             }
-        except Exception:
+        except _API_EXCEPTIONS as exc:
+            logger.warning("audit_sol: RPC failed for %s on %s: %s", _mask_addr(address), rpc_url, exc)
             continue
 
     return {
@@ -368,6 +515,7 @@ def audit_sol(address: str) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 # XRP  —  xrplcluster.com
 # ─────────────────────────────────────────────────────────────────────────────
+@ttl_cache
 def audit_xrp(address: str) -> dict:
     XRP_NODES = [
         "https://xrplcluster.com/",
@@ -383,7 +531,7 @@ def audit_xrp(address: str) -> dict:
                 "params": [{"account": address, "strict": True,
                             "ledger_index": "current", "queue": True}],
             }
-            r_info = requests.post(rpc_url, json=p_info, headers=headers, timeout=_TIMEOUT)
+            r_info = _post(rpc_url, json=p_info, headers=headers, timeout=_TIMEOUT)
             if r_info.status_code != 200:
                 continue
 
@@ -411,13 +559,13 @@ def audit_xrp(address: str) -> dict:
                     "ledger_index_max": -1
                 }]
             }
-            r_tx = requests.post(rpc_url, json=p_tx, headers=headers, timeout=_TIMEOUT)
+            r_tx = _post(rpc_url, json=p_tx, headers=headers, timeout=_TIMEOUT)
             tx_count = 0
             if r_tx.status_code == 200:
                 tx_result = r_tx.json().get("result", {})
                 txs = tx_result.get("transactions", [])
                 tx_count = len(txs)
-                if tx_result.get("marker") or len(txs) == 400:
+                if tx_result.get("marker") or len(txs) >= 400:
                     tx_count = "+400"
 
             return {
@@ -427,7 +575,8 @@ def audit_xrp(address: str) -> dict:
                 "net_balance": round(xrp_balance, 6),
                 "tx_count": tx_count,
             }
-        except Exception:
+        except _API_EXCEPTIONS as exc:
+            logger.warning("audit_xrp: RPC failed for %s on %s: %s", _mask_addr(address), rpc_url, exc)
             continue
 
     return {
@@ -443,7 +592,9 @@ def audit_xrp(address: str) -> dict:
 # Risk Scoring
 # ─────────────────────────────────────────────────────────────────────────────
 def calculate_risk(audit_data: dict, threshold_overrides: dict = None) -> tuple:
-    if audit_data.get("status") != "success":
+    status = audit_data.get("status")
+    is_partial = status == "partial_error"
+    if not is_partial and status != "success":
         return "UNKNOWN / ERROR", audit_data
 
     currency = audit_data.get("currency")
@@ -451,11 +602,14 @@ def calculate_risk(audit_data: dict, threshold_overrides: dict = None) -> tuple:
         return "🚨 CRITICAL RISK / PRIVACY COIN COUNTERMEASURE", audit_data
 
     tx_count = audit_data.get("tx_count", 0)
-    net_balance = audit_data.get("net_balance", 0.0)
+    net_balance = audit_data.get("net_balance", 0.0) or 0.0
 
     # API-cap indicator: "+200", "+400", "+1000" means at least that many txs → auto-critical
     if isinstance(tx_count, str) and tx_count.startswith("+"):
-        return "CRITICAL RISK (🚨)", audit_data
+        risk = "CRITICAL RISK (🚨)"
+        if is_partial:
+            risk += " (PARTIAL DATA)"
+        return risk, audit_data
 
     # Safe numeric comparison for non-capped values
     try:
@@ -495,10 +649,14 @@ def calculate_risk(audit_data: dict, threshold_overrides: dict = None) -> tuple:
     bal_excess = net_balance > balance_threshold * 2
 
     if tx_breach and bal_breach:
-        return "CRITICAL RISK (🚨)", audit_data
+        risk = "CRITICAL RISK (🚨)"
     elif bal_excess:
-        return "CRITICAL RISK (🚨)", audit_data
+        risk = "CRITICAL RISK (🚨)"
     elif tx_breach or bal_breach:
-        return "MEDIUM RISK (⚠️)", audit_data
+        risk = "MEDIUM RISK (⚠️)"
     else:
-        return "LOW RISK (✅)", audit_data
+        risk = "LOW RISK (✅)"
+
+    if is_partial:
+        risk += " (PARTIAL DATA)"
+    return risk, audit_data
