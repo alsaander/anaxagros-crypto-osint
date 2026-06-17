@@ -151,7 +151,7 @@ def audit_btc(address: str) -> dict:
     try:
         url = f"https://blockchain.info/rawaddr/{address}?limit=0"
         headers = {
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            "User-Agent": "Anaxagros-Crypto-OSINT/2.0"
         }
         resp = _get(url, headers=headers, timeout=10)
         if resp.status_code == 200:
